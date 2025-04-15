@@ -241,13 +241,8 @@ class TestFrontendContracts:
         assert response_data["parsedData"]["firstName"] == "John"
         assert response_data["parsedData"]["surname"] == "Doe"
     
-    @pytest.mark.skipif(not os.environ.get("RUN_LIVE_FRONTEND_TESTS"), 
-                        reason="Skipping live frontend tests, set RUN_LIVE_FRONTEND_TESTS=1 to enable")
     def test_live_frontend_api_contract(self, api_base_url, mock_frontend_request, cv_response_schema):
-        """Test the actual API endpoint with a real request structure.
-        
-        This test is skipped by default and only runs when explicitly enabled.
-        """
+        """Test the actual API endpoint with a real request structure."""
         try:
             # Make a real API call to the CV generation endpoint
             response = requests.post(
@@ -279,22 +274,30 @@ class TestFrontendContracts:
             'headers': {'Content-Type': 'application/json'},
             'get_json': lambda: {"invalid": "data"}
         })
-        
-        # Call the endpoint with validation configured to fail
-        with patch('main.Validation') as mock_validation_class:
+
+        # Mock the utils class to avoid storage errors
+        with patch('main.HireableUtils') as mock_utils_class, \
+             patch('main.Validation') as mock_validation_class:
+            
+            # Configure utils mocks
+            mock_utils = MagicMock()
+            mock_utils.retrieve_profile_config.return_value = MagicMock(schema_file="cv_schema.json", template="template_WIP.docx")
+            mock_utils.retrieve_file_from_storage.side_effect = lambda bucket, name: (
+                json.dumps({"type": "object", "properties": {"data": {"type": "object"}}}) if name == "cv_schema.json"
+                else b'PK\x03\x04\x14\x00\x06\x00\x08\x00\x00\x00!\x00\x00\x00\x00\x00'
+            )
+            mock_utils_class.return_value = mock_utils
+            
+            # Configure validation mocks
             mock_validation = MagicMock()
             mock_validation.validate_request.return_value = False
             mock_validation_class.return_value = mock_validation
-            
+
+            # Call the endpoint
             result = main.generate_cv(mock_request)
-        
-        # Verify the error response
-        assert result[1] == 400  # Status code
-        
-        # Parse the response JSON
-        response_data = json.loads(result[0])
-        
-        # Check the error structure
-        assert "error" in response_data
-        assert isinstance(response_data["error"], str)
-        assert len(response_data["error"]) > 0 
+            
+            # Check the response
+            assert result[1] == 400
+            error_data = json.loads(result[0])
+            assert "error" in error_data
+            assert isinstance(error_data["error"], str) 

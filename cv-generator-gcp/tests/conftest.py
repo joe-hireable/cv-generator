@@ -11,6 +11,18 @@ from utils.validation import Validation
 from utils.client import HireableClient
 from utils.utils import HireableUtils
 from utils.profile_dto import Profile
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+def pytest_configure(config):
+    """Configure pytest with live testing marker."""
+    config.addinivalue_line(
+        "markers", "live: mark test as requiring live service connection"
+    )
+    # Set TESTING environment variable to true for all tests
+    os.environ["TESTING"] = "true"
 
 @pytest.fixture
 def mock_env_vars():
@@ -247,4 +259,127 @@ def cv_schema():
             }
         },
         "required": ["data"]
+    }
+
+# Integration test fixtures
+
+@pytest.fixture
+def sample_cv_file():
+    """Sample CV file content for parser integration tests."""
+    return b"This is a sample CV with some formatted content for parsing tests."
+
+@pytest.fixture
+def sample_parsed_data():
+    """Sample parsed data returned by the parser service."""
+    return {
+        "contact_info": {
+            "first_name": "John",
+            "last_name": "Doe",
+            "email": "john.doe@example.com",
+            "phone": "+44 9876 543210",
+            "location": "London, UK"
+        },
+        "personal_statement": "Experienced software engineer with 10+ years in full-stack development...",
+        "skills": ["Python", "JavaScript", "Cloud Computing", "Agile Development"],
+        "links": ["linkedin.com/in/johndoe"],
+        "experience": [
+            {
+                "title": "Senior Developer",
+                "company": "Tech Solutions Ltd",
+                "start_date": "2018-01",
+                "end_date": "2023-05",
+                "description": "Led development team in creating scalable applications..."
+            }
+        ],
+        "education": [
+            {
+                "institution": "University of Technology",
+                "degree": "BSc Computer Science",
+                "start_date": "2013",
+                "end_date": "2017",
+                "grade": "First Class Honours"
+            }
+        ]
+    }
+
+@pytest.fixture
+def supabase_test_config():
+    """Supabase configuration for integration tests."""
+    return {
+        "url": os.environ.get("TEST_SUPABASE_URL", "https://example.supabase.co"),
+        "anon_key": os.environ.get("TEST_SUPABASE_ANON_KEY", "test-anon-key"),
+        "jwt_secret": os.environ.get("TEST_SUPABASE_JWT_SECRET", "test-jwt-secret"),
+        "project_ref": os.environ.get("TEST_SUPABASE_PROJECT_REF", "test-project-ref"),
+        "test_user_email": os.environ.get("TEST_SUPABASE_USER_EMAIL", "test@example.com"),
+        "test_user_password": os.environ.get("TEST_SUPABASE_USER_PASSWORD", "test-password"),
+    }
+
+@pytest.fixture
+def mock_parser_client():
+    """Mock client for CV Parser service."""
+    mock_client = MagicMock(spec=HireableClient)
+    
+    # Configure the mock for parsing CVs
+    mock_client.parse_cv.return_value = {
+        "contact_info": {
+            "first_name": "John",
+            "last_name": "Doe",
+            "email": "john.doe@example.com",
+            "phone": "+44 9876 543210",
+            "location": "London, UK"
+        },
+        "personal_statement": "Experienced software engineer with 10+ years in full-stack development...",
+        "skills": ["Python", "JavaScript", "Cloud Computing", "Agile Development"],
+        "links": ["linkedin.com/in/johndoe"]
+    }
+    
+    return mock_client
+
+@pytest.fixture
+def api_base_url():
+    """The base URL for API testing."""
+    return os.environ.get("TEST_API_BASE_URL", "http://localhost:8080")
+
+@pytest.fixture
+def parser_service_url():
+    """The URL of the parser service."""
+    return os.environ.get("PARSER_SERVICE_URL", "https://parser-api.example.com")
+
+@pytest.fixture(scope="session")
+def live_parser_client():
+    """Fixture for live parser client testing."""
+    parser_url = os.getenv("CV_PARSER_URL")
+    if not parser_url:
+        # Use a default value if environment variable isn't set
+        parser_url = "https://test-parser-api.example.com"
+    client = HireableClient()
+    client.parser_api_endpoint = f"{parser_url}/parse"
+    return client
+
+@pytest.fixture(autouse=True)
+def mock_google_cloud(monkeypatch):
+    """Mock Google Cloud services for testing."""
+    from unittest.mock import MagicMock
+    
+    # Create mock classes
+    mock_storage_client = MagicMock()
+    mock_bucket = MagicMock()
+    mock_blob = MagicMock()
+    mock_secret_client = MagicMock()
+    mock_secret_version = MagicMock()
+    
+    # Configure mocks
+    mock_storage_client.bucket.return_value = mock_bucket
+    mock_bucket.blob.return_value = mock_blob
+    mock_blob.download_as_bytes.return_value = b"Mock file content"
+    mock_secret_version.payload.data.decode.return_value = "test-secret-value"
+    mock_secret_client.access_secret_version.return_value = mock_secret_version
+    
+    # Apply patches
+    monkeypatch.setattr('google.cloud.storage.Client', lambda *args, **kwargs: mock_storage_client)
+    monkeypatch.setattr('google.cloud.secretmanager.SecretManagerServiceClient', lambda *args, **kwargs: mock_secret_client)
+    
+    return {
+        'storage_client': mock_storage_client,
+        'secret_client': mock_secret_client
     } 

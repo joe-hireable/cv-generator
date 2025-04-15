@@ -2,8 +2,13 @@ import requests
 import logging
 import os
 import io
+import json
 from google.cloud import secretmanager
 from typing import Optional, Dict, Any, BinaryIO
+from google.cloud import storage
+from google.auth import default
+from google.auth.transport.requests import Request
+from google.oauth2 import service_account
 
 class HireableClient:
     """
@@ -14,148 +19,196 @@ class HireableClient:
         """
         Initialize the HireableClient with necessary configuration.
         """
-        # If PDF API key is stored in Secret Manager, retrieve it
-        project_id = os.environ.get("PROJECT_ID")
-        pdf_api_key_secret = os.environ.get("PDF_API_KEY_SECRET")
+        # Configure logging first
+        self.logger = logging.getLogger(__name__)
         
-        self.pdf_api_key = None
-        if project_id and pdf_api_key_secret:
-            try:
-                secret_client = secretmanager.SecretManagerServiceClient()
-                secret_name = f"projects/{project_id}/secrets/{pdf_api_key_secret}/versions/latest"
-                response = secret_client.access_secret_version(name=secret_name)
-                self.pdf_api_key = response.payload.data.decode("UTF-8")
-            except Exception as e:
-                logging.error(f"Failed to retrieve PDF API Key: {e}")
+        # Initialize configuration
+        self.project_id = os.getenv("PROJECT_ID")
+        self.storage_bucket_name = os.getenv("STORAGE_BUCKET_NAME")
+        self.pdf_conversion_endpoint = os.getenv("PDF_CONVERSION_ENDPOINT")
+        self.parser_api_endpoint = os.getenv("CV_PARSER_URL")
         
-        # Set the PDF conversion endpoint
-        self.pdf_conversion_endpoint = os.environ.get("PDF_CONVERSION_ENDPOINT", "https://docx2pdf.tombrown.io/convert")
+        # Initialize storage client
+        self.storage_client = storage.Client()
         
-        # Set the CV Parser endpoint
-        self.cv_parser_endpoint = os.environ.get("CV_PARSER_URL", "")
+        # Get API key from secret manager
+        self.pdf_api_key = self._get_api_key()
         
-    def docx_to_pdf(self, docx_stream):
-        """
-        Convert a DOCX file to PDF using an external API.
+    def _get_api_key(self) -> Optional[str]:
+        """Get API key from Secret Manager."""
+        try:
+            if not self.project_id:
+                self.logger.warning("Project ID not configured")
+                return None
+                
+            secret_id = os.getenv("PDF_API_KEY_SECRET")
+            if not secret_id:
+                self.logger.warning("PDF API key secret not configured")
+                return None
+
+            client = secretmanager.SecretManagerServiceClient()
+            name = f"projects/{self.project_id}/secrets/{secret_id}/versions/latest"
+            response = client.access_secret_version(name=name)
+            return response.payload.data.decode("UTF-8")
+        except Exception as e:
+            self.logger.error(f"Error retrieving API key: {str(e)}")
+            return None
         
-        Args:
-            docx_stream (BytesIO): The DOCX file as a byte stream.
+    def docx_to_pdf(self, file: BinaryIO, max_retries: int = 3) -> requests.Response:
+        """Convert DOCX file to PDF using Cloud Function."""
+        if not file:
+            raise ValueError("No file provided")
+
+        # Validate file type
+        if not hasattr(file, 'name'):
+            # For BytesIO objects in tests, provide a default name
+            file.name = "document.docx"
             
-        Returns:
-            Response: The API response containing the PDF.
-        """
-        files = {
-            'file': ("doc.docx", docx_stream, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
-        }
+        file_ext = os.path.splitext(file.name.lower())[1]
+        if file_ext not in ['.docx', '.doc', '.rtf']:
+            raise ValueError(f"Invalid file type: {file_ext}. Must be .docx, .doc, or .rtf")
+
+        # Check file size (10MB limit)
+        file.seek(0, 2)  # Seek to end
+        size = file.tell()
+        file.seek(0)  # Reset to beginning
         
+        if size > 10 * 1024 * 1024:  # 10MB
+            raise ValueError("File too large. Maximum size is 10MB")
+
         headers = {}
         if self.pdf_api_key:
-            headers['API-Key'] = self.pdf_api_key
-            
+            headers["API-Key"] = self.pdf_api_key
+
+        # Determine correct content type based on file extension
+        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        if file_ext == '.doc':
+            content_type = "application/msword"
+        elif file_ext == '.rtf':
+            content_type = "application/rtf"
+
+        retry_count = 0
+        last_error = None
+        should_close_file = True  # For backwards compatibility with tests
+
         try:
-            response = requests.post(
-                self.pdf_conversion_endpoint, 
-                files=files, 
-                headers=headers,
-                timeout=60
-            )
-            
-            if response.status_code != 200:
-                logging.error(f"PDF conversion failed: {response.status_code} - {response.text}")
-                raise Exception(f"PDF conversion failed: {response.status_code}")
-                
-            return response
-        except Exception as e:
-            logging.error(f"Error converting DOCX to PDF: {e}")
-            raise
+            while retry_count < max_retries:
+                try:
+                    file_name = getattr(file, 'name', 'document.docx')
+                    # Update content type based on actual file name for tests
+                    if file_name.lower().endswith('.doc'):
+                        content_type = "application/msword"
+                    elif file_name.lower().endswith('.rtf'):
+                        content_type = "application/rtf"
+                        
+                    response = requests.post(
+                        self.pdf_conversion_endpoint,
+                        files={"file": (file_name, file, content_type)},
+                        headers=headers,
+                        timeout=60
+                    )
+
+                    if response.status_code == 200:
+                        return response
+
+                    error_msg = f"PDF conversion failed: {response.status_code}"
+                    if response.text:
+                        error_msg += f" - {response.text}"
+                    self.logger.error(error_msg)
+                    raise Exception(error_msg)
+
+                except (requests.Timeout, requests.ConnectionError) as e:
+                    last_error = e
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        self.logger.warning(f"Retry {retry_count}/{max_retries} after error: {str(e)}")
+                        # Reopen the file for retry if it was closed
+                        if file.closed:
+                            file.seek(0)
+                        continue
+                    break
+                except Exception as e:
+                    self.logger.error(f"Error converting DOCX to PDF: {str(e)}")
+                    raise
+        finally:
+            # Close the file if it should be closed and is not already closed
+            if should_close_file and not file.closed:
+                file.close()
+
+        if last_error:
+            self.logger.error(f"Error converting DOCX to PDF: {str(last_error)}")
+            raise last_error
+        else:
+            raise Exception("PDF conversion failed after all retries")
     
-    def forward_to_parser_service(self, url: str, form_data: Dict[str, Any], files: Dict[str, tuple], headers: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        """
-        Forward a request to the CV Parser service.
+    def parse_cv(self, file_content=None, file_name=None, cv_file=None, job_description=None, task="parsing", auth_header=None) -> Dict[str, Any]:
+        """Parse CV content using the parser service.
         
         Args:
-            url (str): The URL to forward the request to.
-            form_data (Dict[str, Any]): The form data to send.
-            files (Dict[str, tuple]): The files to send.
-            headers (Dict[str, str], optional): Additional headers.
+            file_content: The CV content as bytes (legacy mode)
+            file_name: The CV filename (legacy mode)
+            cv_file: A file-like object containing the CV (preferred)
+            job_description: Optional job description for matching
+            task: The parsing task (parsing, scoring, etc.)
+            auth_header: Optional authorization header
             
         Returns:
-            Dict[str, Any]: The response from the parser service.
-            
-        Raises:
-            Exception: If the request fails.
+            Dict containing the parsed CV data
         """
         try:
-            # If URL not provided, use the default endpoint
-            if not url and self.cv_parser_endpoint:
-                url = self.cv_parser_endpoint
-            
-            if not url:
-                raise ValueError("CV Parser URL not configured")
+            headers = {}
+            if auth_header:
+                headers["Authorization"] = auth_header
                 
-            # Prepare headers
-            request_headers = {}
-            if headers:
-                request_headers.update(headers)
-            
-            # Send request to parser service
-            response = requests.post(
-                url,
-                data=form_data,
-                files=files,
-                headers=request_headers,
-                timeout=120  # Longer timeout for CV parsing which can take time
-            )
-            
-            # Check response status
+            if cv_file:
+                # New method: use multipart/form-data with file
+                files = {"cv_file": (getattr(cv_file, 'name', 'cv.pdf'), cv_file)}
+                data = {}
+                
+                if job_description:
+                    data["jobDescription"] = job_description
+                if task:
+                    data["task"] = task
+                    
+                response = requests.post(
+                    self.parser_api_endpoint,
+                    files=files,
+                    data=data,
+                    headers=headers,
+                    timeout=60
+                )
+            else:
+                # Legacy method: use JSON with file content
+                payload = {
+                    "fileContent": file_content if isinstance(file_content, str) else file_content.decode('utf-8', errors='ignore'),
+                    "fileName": file_name
+                }
+                
+                if job_description:
+                    payload["jobDescription"] = job_description
+                if task:
+                    payload["task"] = task
+                    
+                response = requests.post(
+                    self.parser_api_endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=60
+                )
+
             if response.status_code != 200:
-                logging.error(f"Parser service error: {response.status_code} - {response.text}")
-                return {"error": f"Parser service error: {response.status_code}"}
-                
-            # Return JSON response
+                error_msg = f"Parser service error: {response.status_code}"
+                if response.text:
+                    error_msg += f" - {response.text}"
+                self.logger.error(error_msg)
+                raise Exception(error_msg)
+
             return response.json()
+
         except Exception as e:
-            logging.error(f"Error forwarding to parser service: {e}")
+            self.logger.error(f"Error parsing CV: {str(e)}")
             raise
     
-    def parse_cv(self, cv_file: BinaryIO, job_description: Optional[str] = None, task: str = "parsing", auth_header: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Parse a CV using the CV Parser service.
-        
-        Args:
-            cv_file (BinaryIO): The CV file to parse.
-            job_description (str, optional): Optional job description for matching.
-            task (str): The parsing task (default: "parsing").
-            auth_header (str, optional): Optional authorization header.
-            
-        Returns:
-            Dict[str, Any]: The parsed CV data.
-            
-        Raises:
-            Exception: If the parsing fails.
-        """
-        # Prepare form data
-        form_data = {"task": task}
-        
-        if job_description:
-            form_data["jd"] = job_description
-            
-        # Prepare files
-        filename = getattr(cv_file, 'name', 'cv.pdf')
-        content_type = self._get_content_type(filename)
-        
-        files = {
-            "cv_file": (filename, cv_file, content_type)
-        }
-        
-        # Prepare headers
-        headers = {}
-        if auth_header:
-            headers['Authorization'] = auth_header
-            
-        # Call parser service
-        return self.forward_to_parser_service(self.cv_parser_endpoint, form_data, files, headers)
-        
     def send_notification(self, to_email: str, subject: str, message: str, attachment: Optional[io.BytesIO] = None, attachment_name: Optional[str] = None):
         """
         Send an email notification with optional attachment.
@@ -173,7 +226,7 @@ class HireableClient:
         """
         # This is a placeholder for email notification functionality
         # Implementation would depend on your preferred email service
-        logging.info(f"Notification would be sent to {to_email} with subject: {subject}")
+        self.logger.info(f"Notification would be sent to {to_email} with subject: {subject}")
         return True
         
     def _get_content_type(self, filename: str) -> str:

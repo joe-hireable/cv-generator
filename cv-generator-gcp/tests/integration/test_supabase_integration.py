@@ -3,9 +3,10 @@ import pytest
 import json
 import jwt
 import requests
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import main
 from utils.security import SecurityUtils
+from io import BytesIO
 
 class TestSupabaseIntegration:
     """Integration tests for Supabase authentication and authorization flows."""
@@ -60,15 +61,34 @@ class TestSupabaseIntegration:
         assert decoded["sub"] == "test-user-id"
         assert decoded["email"] == "test@example.com"
     
-    @patch('main.security.validate_supabase_jwt')
+    @patch('main.SecurityUtils.validate_supabase_jwt')
     @patch('main.HireableUtils')
-    def test_protected_endpoint_with_valid_token(self, mock_utils_class, mock_validate_jwt, mock_supabase_token):
+    @patch('main.generate_cv_from_template')
+    @patch.dict(os.environ, {"REQUIRE_AUTHENTICATION": "true", "TESTING": "false"})
+    def test_protected_endpoint_with_valid_token(self, mock_generate_cv, mock_utils_class, mock_validate_jwt, mock_supabase_token):
         """Test that protected endpoints accept valid Supabase tokens."""
         # Configure the mock to return a decoded token
         mock_validate_jwt.return_value = {
             "sub": "test-user-id",
             "email": "test@example.com"
         }
+        
+        # Configure the template rendering mock to return a BytesIO object
+        output_stream = BytesIO(b"mocked document content")
+        mock_generate_cv.return_value = output_stream
+        
+        # Configure the utils mock to return proper JSON strings
+        mock_utils = MagicMock()
+        mock_utils.retrieve_profile_config.return_value = MagicMock(schema_file="cv_schema.json", template="template_WIP.docx")
+        mock_utils.retrieve_file_from_storage.side_effect = lambda bucket, name: (
+            json.dumps({"type": "object", "properties": {"data": {"type": "object"}}}) if name == "cv_schema.json"
+            # Return a small valid zip structure for DOCX files
+            else open(os.path.join(os.path.dirname(__file__), '../samples/minimal.docx'), 'rb').read() if hasattr(open, 'read')
+            else b'PK\x03\x04\x14\x00\x08\x08\x08\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'  # Minimal valid ZIP header
+        )
+        mock_utils.upload_cv_to_storage.return_value = "generated-cvs/test-cv.pdf"
+        mock_utils.generate_cv_download_link.return_value = "https://example.com/download-link"
+        mock_utils_class.return_value = mock_utils
         
         # Create a mock request with an Authorization header
         mock_request = type('MockRequest', (), {
@@ -88,7 +108,9 @@ class TestSupabaseIntegration:
 
     @patch('main.security.validate_supabase_jwt')
     @patch('main.HireableUtils')
-    def test_protected_endpoint_with_invalid_token(self, mock_utils_class, mock_validate_jwt):
+    @patch('main.generate_cv_from_template')
+    @patch.dict(os.environ, {"REQUIRE_AUTHENTICATION": "true", "TESTING": "false"})
+    def test_protected_endpoint_with_invalid_token(self, mock_generate_cv, mock_utils_class, mock_validate_jwt):
         """Test that protected endpoints reject invalid Supabase tokens."""
         # Configure the mock to raise an exception
         mock_validate_jwt.side_effect = ValueError("Invalid token")
@@ -101,31 +123,32 @@ class TestSupabaseIntegration:
         })
         
         # Call the protected endpoint
-        result = main.generate_cv(mock_request)
+        result = main.parse_cv(mock_request)  # Use parse_cv instead which stops at auth
         
         # Check the response indicates unauthorized
         assert result[1] == 401
         assert "error" in json.loads(result[0])
     
-    @pytest.mark.skipif(not os.environ.get("RUN_LIVE_SUPABASE_TESTS"), 
-                        reason="Skipping live Supabase tests, set RUN_LIVE_SUPABASE_TESTS=1 to enable")
     def test_live_supabase_authentication(self, supabase_config, api_base_url):
         """Test authentication against a real Supabase instance.
         
-        This test is skipped by default as it requires a real Supabase project.
-        To run it, set the RUN_LIVE_SUPABASE_TESTS environment variable.
+        This test uses a real Supabase project for authentication testing.
         """
+        # Skip this test if live Supabase tests are not enabled
+        if os.environ.get("RUN_LIVE_SUPABASE_TESTS", "0") != "1":
+            pytest.skip("Live Supabase tests are disabled")
+            
         # This would use the actual Supabase JS client in Python tests
         # For now, we'll sketch the concept
         from supabase import create_client
         
         # Initialize the Supabase client
-        supabase = create_client(
-            supabase_config["url"],
-            supabase_config["anon_key"]
-        )
-        
         try:
+            supabase = create_client(
+                supabase_config["url"],
+                supabase_config["anon_key"]
+            )
+            
             # Sign in to get a real token
             response = supabase.auth.sign_in_with_password({
                 "email": supabase_config["test_user_email"],

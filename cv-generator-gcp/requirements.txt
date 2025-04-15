@@ -9,9 +9,15 @@ python-docx
 Jinja2
 MarkupSafe
 PyJWT
+python-dotenv
+docx2pdf
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
 # Test dependencies
 pytest
 pytest-cov
-supabase-py
+supabase
 pytest-mock
 pytest-env
+psutil

@@ -27,18 +27,33 @@ class Validation:
         Returns:
             bool: True if validation succeeded, False otherwise.
         """
+        # Check for empty request
+        if not request:
+            logging.error("Empty request provided")
+            return False
+            
         try:
+            # First, validate with JSON Schema if provided (for backward compatibility)
+            if cv_schema:
+                try:
+                    validate(instance=request, schema=cv_schema)
+                except ValidationError as e:
+                    logging.error(f"JSON Schema validation error: {str(e)}")
+                    return False
+            
             # Convert legacy keys to snake_case for Pydantic model
             request_copy = self._transform_request_keys(request)
             
             # Validate using Pydantic model
-            validated_data = CVGenerationRequest.model_validate(request_copy)
-            return True
-        except PydanticValidationError as e:
-            # Log detailed validation errors
-            for error in e.errors():
-                logging.error(f"Validation error: {error['msg']} at {'.'.join(str(loc) for loc in error['loc'])}")
-            return False
+            try:
+                validated_data = CVGenerationRequest.model_validate(request_copy)
+                return True
+            except PydanticValidationError as e:
+                # Log detailed validation errors
+                for error in e.errors():
+                    logging.error(f"Validation error: {error['msg']} at {'.'.join(str(loc) for loc in error['loc'])}")
+                return False
+                
         except Exception as e:
             logging.error(f"Unexpected validation error: {str(e)}")
             return False
