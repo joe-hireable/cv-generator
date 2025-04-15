@@ -13,6 +13,8 @@ import os
 from utils.validation import Validation
 from utils.client import HireableClient
 from utils.utils import HireableUtils
+from utils.security import SecurityUtils
+from utils.adapter import HireableCVAdapter
 from models.schema import CVGenerationRequest
 import copy
 
@@ -35,7 +37,7 @@ def generate_cv(request):
         headers = {
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'POST',
-            'Access-Control-Allow-Headers': 'Content-Type',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
             'Access-Control-Max-Age': '3600'
         }
         return ('', 204, headers)
@@ -99,6 +101,250 @@ def generate_cv(request):
     logging.info(f"CV Download Link: {response}")
 
     return (json.dumps(response), 200, headers)
+
+@functions_framework.http
+def parse_cv(request):
+    """
+    Google Cloud Function that proxies CV parsing requests to the CV Parser service.
+    
+    Args:
+        request (flask.Request): HTTP request object.
+        
+    Returns:
+        flask.Response: HTTP response with parsed CV data.
+    """
+    # Initialize utilities
+    validation, client, utils, security = Validation(), HireableClient(), HireableUtils(), SecurityUtils()
+    
+    # Handle CORS for preflight requests
+    if request.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '3600'
+        }
+        return ('', 204, headers)
+    
+    # Set CORS headers for the main request
+    headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST',
+        'Content-Type': 'application/json'
+    }
+    
+    try:
+        # Check authentication if enforced
+        auth_required = os.environ.get("REQUIRE_AUTHENTICATION", "true").lower() == "true"
+        
+        if auth_required:
+            auth_header = request.headers.get('Authorization')
+            if not auth_header:
+                return (json.dumps({"error": "Authentication required"}), 401, headers)
+                
+            # Extract and validate token
+            token = security.extract_token_from_header(auth_header)
+            if not token:
+                return (json.dumps({"error": "Invalid authorization header format"}), 401, headers)
+                
+            try:
+                security.validate_supabase_jwt(token)
+            except ValueError as e:
+                return (json.dumps({"error": str(e)}), 401, headers)
+        
+        # Check for CV file
+        if 'file' not in request.files:
+            return (json.dumps({"error": "No CV file provided"}), 400, headers)
+        
+        cv_file = request.files['file']
+        
+        # Get optional job description if provided
+        job_description = None
+        if 'jobDescription' in request.form:
+            job_description = request.form['jobDescription']
+        
+        # Determine optimization task
+        task = request.form.get('task', 'parsing')
+        if task not in ['parsing', 'ps', 'cs', 'ka', 'role', 'scoring']:
+            task = 'parsing'  # Default to parsing
+        
+        # Forward request to CV Parser service
+        try:
+            # Pass through the auth header to the parser service
+            auth_header = request.headers.get('Authorization')
+            
+            # Parse the CV
+            result = client.parse_cv(
+                cv_file, 
+                job_description, 
+                task, 
+                auth_header
+            )
+            
+            if "error" in result:
+                return (json.dumps(result), 400, headers)
+                
+            return (json.dumps(result), 200, headers)
+            
+        except Exception as e:
+            logging.error(f"Error calling CV Parser service: {e}")
+            return (json.dumps({"error": f"Error processing CV: {str(e)}"}), 500, headers)
+            
+    except Exception as e:
+        logging.error(f"Error in parse_cv: {e}")
+        return (json.dumps({"error": str(e)}), 500, headers)
+
+@functions_framework.http
+def parse_and_generate_cv(request):
+    """
+    Google Cloud Function that combines CV parsing and document generation.
+    First parses a CV file using the CV Parser service, then generates a document.
+    
+    Args:
+        request (flask.Request): HTTP request object.
+        
+    Returns:
+        flask.Response: HTTP response with parsed CV data and generated document URL.
+    """
+    # Initialize utilities
+    validation, client, utils, security = Validation(), HireableClient(), HireableUtils(), SecurityUtils()
+    adapter = HireableCVAdapter()
+    
+    # Handle CORS for preflight requests
+    if request.method == 'OPTIONS':
+        headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'POST',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '3600'
+        }
+        return ('', 204, headers)
+    
+    # Set CORS headers for the main request
+    headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST',
+        'Content-Type': 'application/json'
+    }
+    
+    try:
+        # Check authentication if enforced
+        auth_required = os.environ.get("REQUIRE_AUTHENTICATION", "true").lower() == "true"
+        
+        if auth_required:
+            auth_header = request.headers.get('Authorization')
+            if not auth_header:
+                return (json.dumps({"error": "Authentication required"}), 401, headers)
+                
+            # Extract and validate token
+            token = security.extract_token_from_header(auth_header)
+            if not token:
+                return (json.dumps({"error": "Invalid authorization header format"}), 401, headers)
+                
+            try:
+                security.validate_supabase_jwt(token)
+            except ValueError as e:
+                return (json.dumps({"error": str(e)}), 401, headers)
+        
+        # Check for CV file
+        if 'file' not in request.files:
+            return (json.dumps({"error": "No CV file provided"}), 400, headers)
+        
+        cv_file = request.files['file']
+        
+        # Get options from request
+        job_description = request.form.get('jobDescription')
+        template = request.form.get('template')
+        output_format = request.form.get('outputFormat', 'docx')
+        
+        if output_format not in ['docx', 'pdf']:
+            output_format = 'docx'
+        
+        # 1. Parse the CV
+        logging.info("Parsing CV file")
+        auth_header = request.headers.get('Authorization')
+        
+        cv_file.seek(0)  # Ensure file is at start position
+        parse_result = client.parse_cv(
+            cv_file, 
+            job_description, 
+            "parsing", 
+            auth_header
+        )
+        
+        if "error" in parse_result:
+            return (json.dumps(parse_result), 400, headers)
+            
+        cv_data = parse_result.get("cv_data", {})
+        
+        # 2. Convert parsed data to CV Generator format
+        logging.info("Converting parsed data to CV Generator format")
+        generator_data = adapter.parser_to_generator(cv_data)
+        
+        # Add recruiter profile if provided
+        if 'recruiterProfile' in request.form:
+            try:
+                recruiter_profile = json.loads(request.form['recruiterProfile'])
+                generator_data['recruiterProfile'] = recruiter_profile
+            except Exception as e:
+                logging.warning(f"Error parsing recruiter profile: {e}")
+                
+        # Add template if provided
+        if template:
+            generator_data['template'] = template
+            
+        # Add output format
+        generator_data['outputFormat'] = output_format
+        
+        # 3. Generate the CV document
+        profile = utils.retrieve_profile_config()
+        
+        # Validate request data
+        if not validation.validate_request(generator_data, json.loads(utils.retrieve_file_from_storage("cv-schemas", profile.schema_file))):
+            return (json.dumps({"error": "Converted CV data validation failed"}), 400, headers)
+        
+        # Create Pydantic model from the validated data
+        req_model = CVGenerationRequest.model_validate(validation._transform_request_keys(generator_data))
+        
+        # Get template from request or profile
+        if template:
+            profile.template = template
+            
+        # Prepare context for template rendering
+        template_context = prepare_template_context(
+            generator_data, 
+            req_model.section_order, 
+            req_model.section_visibility.model_dump() if req_model.section_visibility else None,
+            req_model.is_anonymized
+        )
+        
+        # Generate CV from template
+        output_stream = generate_cv_from_template(template_context, utils.retrieve_file_from_storage("cv-generator", profile.template))
+    
+        if output_format == "pdf":
+            output_stream = BytesIO(client.docx_to_pdf(output_stream).content)
+            generated_cv_filename = generate_filename(generator_data, output_format)
+        else:
+            generated_cv_filename = generate_filename(generator_data)
+    
+        # Upload to Google Cloud Storage
+        utils.upload_cv_to_storage(output_stream, generated_cv_filename)
+    
+        # 4. Prepare the combined response
+        response = {
+            "parsed_data": cv_data,
+            "document_url": utils.generate_cv_download_link(generated_cv_filename)
+        }
+        
+        # Include any optimization scores if available
+        if "scores" in parse_result:
+            response["scores"] = parse_result["scores"]
+        
+        return (json.dumps(response), 200, headers)
+            
+    except Exception as e:
+        logging.error(f"Error in parse_and_generate_cv: {e}")
+        return (json.dumps({"error": str(e)}), 500, headers)
 
 def escape_ampersands(data):
     """

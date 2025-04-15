@@ -8,3 +8,10 @@ jsonschema
 python-docx
 Jinja2
 MarkupSafe
+PyJWT
+# Test dependencies
+pytest
+pytest-cov
+supabase-py
+pytest-mock
+pytest-env

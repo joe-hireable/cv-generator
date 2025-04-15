@@ -185,6 +185,49 @@ gcloud functions deploy generate-cv \
 }
 ```
 
-## Integration
+## Integration with CV Branding Buddy and CV Parser
 
-This function is designed to work with the Hireable CV Branding Buddy frontend application and the CV Parser backend. 
+This CV Generator service now seamlessly integrates with the CV Branding Buddy frontend and CV Parser backend, creating a comprehensive CV management ecosystem.
+
+### New API Endpoints
+
+The following new API endpoints have been added to support integration with other services:
+
+1. **Parse CV** (`/parse_cv`) - Proxies CV parsing requests to the CV Parser service
+   - Forwards CV and job description files to the parser
+   - Supports Supabase JWT authentication
+   - Returns structured CV data
+
+2. **Parse and Generate CV** (`/parse_and_generate_cv`) - Combined workflow
+   - Parses a CV using the CV Parser service
+   - Converts the parsed data to CV Generator format
+   - Generates a professional document
+   - Returns both the parsed data and document download URL
+
+### Authentication
+
+The service now supports Supabase JWT token authentication:
+
+- JWT tokens must be sent in the `Authorization` header (`Bearer TOKEN`)
+- Tokens are validated for signature and expiration
+- Authentication can be enforced via the `REQUIRE_AUTHENTICATION` environment variable
+
+### Environment Variables
+
+New environment variables for integration:
+
+- `CV_PARSER_URL` - The URL of the CV Parser service
+- `SUPABASE_JWT_SECRET` - The JWT secret for Supabase token validation
+- `REQUIRE_AUTHENTICATION` - Whether to enforce authentication (default: true)
+
+### Integration Flow
+
+1. Frontend sends CV file to `/parse_and_generate_cv` endpoint
+2. CV Generator forwards the file to CV Parser for analysis
+3. CV Generator converts the parsed data to its required format
+4. CV Generator creates a professional document from the structured data
+5. Both parsed CV data and document URL are returned to the frontend
+
+### Data Adapters
+
+New data adapters convert between CV Parser and CV Generator data formats, ensuring compatibility between the services. 
