@@ -1,0 +1,10 @@
+functions-framework
+docxtpl
+requests
+google-cloud-storage
+google-cloud-secret-manager
+pydantic
+jsonschema
+python-docx
+Jinja2
+MarkupSafe

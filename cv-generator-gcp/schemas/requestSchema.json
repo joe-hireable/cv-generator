@@ -1,0 +1,63 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "template": {
+            "type": "string"
+        },
+        "outputFormat": {
+            "type": "string",
+            "enum": ["doc", "docx", "pdf"]
+        },
+        "sectionOrder": {
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "description": "Ordered list of section names to control section order in the CV"
+        },
+        "sectionVisibility": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "boolean"
+            },
+            "description": "Dictionary of section names and boolean values to control section visibility"
+        },
+        "isAnonymized": {
+            "type": "boolean",
+            "description": "Whether to anonymize personal information in the CV"
+        },
+        "recruiterProfile": {
+            "type": "object",
+            "properties": {
+                "firstName": {
+                    "type": "string"
+                },
+                "lastName": {
+                    "type": "string"
+                },
+                "email": {
+                    "type": "string"
+                },
+                "phone": {
+                    "type": "string"
+                },
+                "agencyName": {
+                    "type": "string"
+                },
+                "agencyLogo": {
+                    "type": "string"
+                },
+                "website": {
+                    "type": "string"
+                }
+            },
+            "description": "Recruiter and agency information for branding"
+        },
+        "data": {
+            "type": "object",
+            "description": "CV data to be rendered in the template"
+        }
+    },
+    "required": ["data"]
+} 

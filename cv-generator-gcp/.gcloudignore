@@ -1,0 +1,25 @@
+# Python pycache:
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest cache
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Test related files
+tests/
+run_tests.ps1
+run_tests.sh
+pytest.ini
+.coverage
+
+# Development configuration
+.git/
+.gitignore
+requirements-dev.txt
+cv_generator.egg-info/
+setup.py 

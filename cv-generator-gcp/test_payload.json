@@ -1,0 +1,11 @@
+{
+  "data": {
+    "first_name": "John",
+    "surname": "Doe",
+    "email": "john.doe@example.com",
+    "phone": "+44 123 456 7890",
+    "profile_statement": "Experienced software developer with expertise in cloud technologies and Python development.",
+    "skills": ["Python", "Google Cloud", "CI/CD", "API Development"]
+  },
+  "output_format": "docx"
+} 

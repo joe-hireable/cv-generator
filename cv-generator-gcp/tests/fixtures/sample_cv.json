@@ -1,0 +1,112 @@
+{
+  "template": "template_WIP.docx",
+  "outputFormat": "pdf",
+  "sectionOrder": [
+    "personal_info",
+    "profile_statement",
+    "skills",
+    "experience",
+    "education"
+  ],
+  "sectionVisibility": {
+    "personal_info": true,
+    "profile_statement": true,
+    "skills": true,
+    "experience": true,
+    "education": true,
+    "certifications": false,
+    "achievements": true,
+    "languages": false,
+    "professional_memberships": false,
+    "earlier_career": false,
+    "publications": false,
+    "additional_details": false
+  },
+  "isAnonymized": false,
+  "recruiterProfile": {
+    "firstName": "Jane",
+    "lastName": "Smith",
+    "email": "jane.smith@example.com",
+    "phone": "+44 1234 567890",
+    "agencyName": "Hireable Recruiting",
+    "agencyLogo": "https://example.com/logo.png",
+    "website": "https://example.com"
+  },
+  "data": {
+    "firstName": "John",
+    "surname": "Doe",
+    "email": "john.doe@example.com",
+    "phone": "+44 9876 543210",
+    "address": "London, UK",
+    "linkedin": "linkedin.com/in/johndoe",
+    "profileStatement": "Experienced software engineer with 10+ years in full-stack development specializing in cloud architecture and distributed systems. Proven track record of delivering high-quality solutions in fast-paced environments.",
+    "skills": ["Python", "JavaScript", "Google Cloud Platform", "AWS", "Docker", "Kubernetes", "CI/CD", "Agile Development"],
+    "experience": [
+      {
+        "role": "Senior Cloud Architect",
+        "company": "Tech Solutions Ltd",
+        "startDate": "2020-01",
+        "endDate": "2023-05",
+        "description": "Led the migration of legacy systems to cloud infrastructure, resulting in 40% cost reduction and improved scalability.",
+        "achievements": [
+          "Designed and implemented microservices architecture",
+          "Reduced deployment time from days to hours using automated CI/CD",
+          "Mentored junior developers in cloud best practices"
+        ]
+      },
+      {
+        "role": "DevOps Engineer",
+        "company": "InnovateTech",
+        "startDate": "2017-03",
+        "endDate": "2019-12",
+        "description": "Responsible for infrastructure automation and deployment pipelines.",
+        "achievements": [
+          "Built Kubernetes clusters for production workloads",
+          "Implemented infrastructure as code using Terraform",
+          "Reduced server provisioning time by 75%"
+        ]
+      }
+    ],
+    "education": [
+      {
+        "institution": "University of Technology",
+        "degree": "MSc Computer Science",
+        "field": "Cloud Computing",
+        "startDate": "2015",
+        "endDate": "2017",
+        "grade": "Distinction"
+      },
+      {
+        "institution": "City University",
+        "degree": "BSc Computer Science",
+        "startDate": "2011",
+        "endDate": "2015",
+        "grade": "First Class Honours"
+      }
+    ],
+    "certifications": [
+      {
+        "name": "Google Cloud Professional Architect",
+        "issuer": "Google",
+        "date": "2021"
+      },
+      {
+        "name": "AWS Certified Solutions Architect",
+        "issuer": "Amazon Web Services",
+        "date": "2019"
+      }
+    ],
+    "achievements": [
+      {
+        "title": "Cloud Migration Award",
+        "description": "Recognized for successful migration of enterprise systems to GCP",
+        "date": "2022"
+      },
+      {
+        "title": "Patent: Distributed System Scaling Algorithm",
+        "description": "Co-inventor of a patented method for dynamic resource allocation",
+        "date": "2021"
+      }
+    ]
+  }
+} 

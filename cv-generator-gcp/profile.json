@@ -1,0 +1,5 @@
+{
+  "template": "cv_template.docx",
+  "schema_file": "cv_schema.json",
+  "output_format": "docx"
+} 
