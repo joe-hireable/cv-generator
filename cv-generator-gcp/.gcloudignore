@@ -10,6 +10,9 @@ __pycache__/
 .venv/
 venv/
 
+# Model context files
+model_context/
+
 # Test related files
 tests/
 run_tests.ps1

@@ -7,6 +7,9 @@ cv-optimizer-key.json
 .env
 .env.local
 
+# Model context files
+model_context/
+
 # Python
 __pycache__/
 *.py[cod]
